@@ -1,0 +1,14 @@
+# Binários e Objetos
+*.o
+*.exe
+*.out
+*.app
+
+# Pastas de build (se tiver)
+build/
+bin/
+obj/
+
+# Arquivos de sistema/editor
+.vscode/
+.DS_Store
