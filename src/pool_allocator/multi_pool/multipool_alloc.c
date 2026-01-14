@@ -132,11 +132,11 @@ Pool *pool_create(Allocator *allocator, size_t block_size, size_t block_count, s
     return cp;
 }
 
-Pool *pool_alloc(Pool *p) {
-       Pool_Block *result = p->free_list;
+void *pool_alloc(Pool *p) {
+    Pool_Block *result = p->free_list;
     p->free_list = result->next;
     
-    return result;
+    return (void*)result;
 }
 
 void pool_free(Pool *p) {
@@ -149,11 +149,4 @@ void *palloc() {
     Automatic allocation for generic pools
     ...
     */
-}
-
-void *pool_alloc(Pool *pool) {
-    Pool_Block *block = pool->free_list;
-    pool->free_list = block->next;
-
-    return (void*)block;
 }

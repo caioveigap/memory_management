@@ -22,16 +22,6 @@ Generic Pools: 8 bytes | 16 bytes | 32 bytes | 64 bytes | 128 bytes | 256 bytes 
 Maior que 512 bytes, utilizaremos outra estratégia de alocação
 */
 
-struct Allocator {
-    void *heap_start;
-    size_t heap_capacity;
-    size_t heap_offset;
-    
-    size_t num_pools;
-    Pool generic_pools[MAX_GENERIC_POOLS]; 
-    Pool custom_pools[MAX_CUSTOM_POOLS];
-};
-
 
 struct Pool_Block {
     Pool_Block *next;
@@ -50,7 +40,17 @@ struct Pool {
     void *pool_start;
 };
 
+struct Allocator {
+    void *heap_start;
+    size_t heap_capacity;
+    size_t heap_offset;
+    
+    size_t num_pools;
+    Pool generic_pools[MAX_GENERIC_POOLS]; 
+    Pool custom_pools[MAX_CUSTOM_POOLS];
+};
+
 Allocator *allocator_create();
 Pool *pool_create(Allocator *allocator, size_t block_size, size_t block_count, size_t alignment);
-Pool *pool_alloc(Pool *p);
+void *pool_alloc(Pool *p);
 void pool_free(Pool *p);
