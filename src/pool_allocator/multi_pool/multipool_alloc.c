@@ -6,62 +6,15 @@
 #include <ctype.h>
 #include <stdbool.h>
 
+typedef uint8_t u8;
+
 /*
-TODO: Suportar blocos com menos de 4 bytes usando um offset ao invés de ponteiros.
-TODO: Criar função pool_grow(), para criar um novo chunck e linkar com o chunck atual
+TODO: Criar função pool_grow()
+TODO: Criar alocação em pools genéricas
  */
 
 void print_addr(void *ptr, char *label) {
     printf("%s Address: %ld\n", label, (uintptr_t)ptr);
-}
-
-void debug_print_page(Page_Allocator *page) {
-    if (!page) { printf("Page is NULL\n"); return; }
-
-    printf("\n=== PAGE DUMP (Cap: %zu | Used: %zu) ===\n", page->capacity, page->offset);
-    printf("Memory Addr: %p\n", (void*)page);
-    
-    unsigned char *mem = page->temp_memory;
-    size_t limit = page->capacity;
-    
-    // Imprime cabeçalho
-    printf("Offset  | Bytes (Hex)                                     | ASCII\n");
-    printf("--------|-------------------------------------------------|----------------\n");
-
-    for (size_t i = 0; i < limit; i += 16) {
-        // Para não poluir, se a página for gigante (ex: 1MB), 
-        // pare de imprimir se passar muito do offset usado.
-        if (i > page->offset + 32 && i > 64) {
-            printf("... (restante da memória não utilizada) ...\n");
-            break;
-        }
-
-        printf("%04zX    | ", i);
-
-        // Hex
-        for (size_t j = 0; j < 16; j++) {
-            if (i + j < limit) {
-                // Destaque visual: Se o byte está na área usada, imprime normal.
-                // Se está na área livre, imprime mais apagado (se o terminal suportar)
-                // Aqui apenas diferenciamos logicamente:
-                printf("%02X ", mem[i + j]);
-            } else {
-                printf("   ");
-            }
-        }
-        
-        printf("| ");
-
-        // ASCII
-        for (size_t j = 0; j < 16; j++) {
-            if (i + j < limit) {
-                unsigned char c = mem[i + j];
-                printf("%c", isprint(c) ? c : '.');
-            }
-        }
-        printf("\n");
-    }
-    printf("-------------------------------------------------------------------\n");
 }
 
 bool is_power_of_two(size_t x) {
@@ -72,7 +25,7 @@ void *get_ptr_from_offset(void *start, size_t offset) {
     return (void*)((uintptr_t)start + offset);
 }
 
-size_t align_block_size(size_t size, size_t alignment) {
+size_t align_size(size_t size, size_t alignment) {
     size_t aligned_size = sizeof(void*); // Mínimo é o ponteiro next
     if (size > aligned_size) aligned_size = size;
 
@@ -89,104 +42,113 @@ void *align_ptr(void *ptr, size_t alignment) {
     return (void*)(addr + (alignment - remainder));
 }
 
-void *request_memory(Allocator *alloc, size_t size) {
-    size_t num_pages = (size + PAGE_SIZE - 1) /  PAGE_SIZE;
-    size_t alloc_size = num_pages * PAGE_SIZE;
-    
-    void *page_ptr = mmap(NULL, alloc_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-
-    // Insere página na lista de páginas
-    alloc->num_pages += num_pages;
-    Page_Allocator *page_alloc = (Page_Allocator*)page_ptr;
-    page_alloc->capacity = alloc_size;
-    page_alloc->offset = sizeof(Page_Allocator);
-    page_alloc->next = alloc->pages;
-    alloc->pages = page_alloc;
-
-    page_ptr = (void*)((uintptr_t)page_ptr + (uintptr_t)(sizeof(Page_Allocator)));
-    return page_ptr;
-}
 /* 
 TODO: Fix pointer arithmetic and pool allocation
+
+Creates allocator for program use
+
+TODO: Tente entender melhor como criar um alocador geral, e separar os conceitos de Arena, Pools, LargeObjs, e como organizar eles
+
 */
 Allocator *allocator_create() {
-    void *raw_mem = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    size_t heap_size = INITIAL_HEAP_SIZE; // 16 MiB
+    void *heap_base = mmap(NULL, heap_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-    // Allocator *alloc = (Allocator*)raw_mem;
-    Page_Allocator *root_page = (Page_Allocator*)raw_mem;
-    root_page->capacity = PAGE_SIZE;
-    root_page->offset = sizeof(Page_Allocator);
-    root_page->next = NULL;
-    root_page->temp_memory = raw_mem;
+    size_t initial_alloc_size = align_size(sizeof(Allocator), DEFAULT_ALIGNMENT); 
+    mprotect(heap_base, initial_alloc_size, PROT_READ | PROT_WRITE);
+    
+    Allocator *allocator = (Allocator*)heap_base;
+    allocator->heap_start = heap_base;
+    allocator->heap_capacity = heap_size;
+    allocator->heap_offset = sizeof(Allocator);
 
-    Allocator *alloc = (Allocator*)get_ptr_from_offset(root_page, sizeof(Page_Allocator));
-    alloc->num_pages = 0;
-    alloc->num_pools = 8;
-    alloc->pages = NULL;
+    // Init generic pools
+    size_t pool_block_size = 8;
+    size_t pool_alignment = 8;
 
-    void *pools_start = (void*)((char*)alloc + sizeof(Allocator));
-    alloc->pools = align_ptr(pools_start, DEFAULT_ALIGNMENT);
-    // Criar pools genéricas
-    /* 4, 8, 16, 32, 64, 128, 256, 512 */
-
-    alloc->num_pools = 8;
-    size_t current_block_size = 4;
-
-    for (int i = 0; i < alloc->num_pools; i++) {
-        Pool *p = &alloc->pools[i];
-
-        p->block_size = current_block_size;
-
-        if (current_block_size < DEFAULT_ALIGNMENT) {
-            p->alignment = current_block_size;
-        } else {
-            p->alignment = DEFAULT_ALIGNMENT;
-        }
-
-        p->blocks_per_chunck = PAGE_SIZE / p->block_size;
-        p->chuncks = NULL;
-        p->free_list = NULL;
-
-        current_block_size *= 2;
+    for (size_t i = 0; i < MAX_GENERIC_POOLS; i++) {
+        Pool current_pool = allocator->generic_pools[i];
+        if (i != 0) pool_alignment = DEFAULT_ALIGNMENT;
+        current_pool.alignment = pool_alignment;
+        current_pool.block_size = pool_block_size;
+        current_pool.pool_size = 0;
+        current_pool.free_list = NULL;
+        current_pool.pool_start = NULL;
+        pool_block_size *= 2;
     }
 
-    uintptr_t pools_end = ((uintptr_t)pools_start + (sizeof(Pool) * POOL_ALLOCATION_LIMIT));
-    void *free_start = align_ptr((void*)pools_end, DEFAULT_ALIGNMENT);
-    root_page->offset = ((uintptr_t)free_start - (uintptr_t)raw_mem);
-
-    return alloc;
-}
-
-Pool *pool_create(Allocator *alloc, size_t block_size, size_t alignment) {
-    Pool *pool = &alloc->pools[alloc->num_pools];
-    alloc->num_pools++;
-
-    pool->block_size = align_block_size(block_size, alignment);
-    pool->alignment = alignment;
-    pool->blocks_per_chunck = (PAGE_SIZE - sizeof(Pool_Chunck) - pool->alignment) / pool->block_size;
-    
-    void *chunck_memory = request_memory(alloc, PAGE_SIZE);
-    pool->chuncks = (Pool_Chunck*)chunck_memory;
-    pool->chuncks->next = NULL;
-    
-    unsigned char *block_start = (unsigned char*)chunck_memory + sizeof(Pool_Chunck);
-    block_start = align_ptr(block_start, pool->alignment);
-
-    Pool_Block *current = (Pool_Block*)block_start;
-    pool->free_list = current; //Começo dos blocos
-
-    for (size_t i = 0; i < pool->blocks_per_chunck - 1; i++) {
-        current->next = (Pool_Block*)((unsigned char*)current + pool->block_size);
-        current = current->next;
+    for (size_t i = 0; i < MAX_CUSTOM_POOLS; i++) {
+        Pool current_pool = allocator->custom_pools[i];
+        current_pool.alignment = DEFAULT_ALIGNMENT;
+        current_pool.block_size = 0;
+        current_pool.pool_size = 0;
+        current_pool.free_list = NULL;
+        current_pool.pool_start = NULL;
     }
 
-    current->next = NULL;
-
-    return pool;
+    return allocator;
 }
+
+void *get_memory(Allocator *allocator, size_t size) {
+    void *curr_addr = allocator->heap_start + allocator->heap_offset;
+    
+    size_t alloc_size = align_size(size, DEFAULT_ALIGNMENT);
+    mprotect(curr_addr, alloc_size, PROT_READ | PROT_WRITE);
+
+    allocator->heap_offset += alloc_size;
+
+    return curr_addr;
+}
+
+Pool *pool_create(Allocator *allocator, size_t block_size, size_t block_count, size_t alignment) {
+    // Search for free custom pool
+    size_t i = 0;
+    Pool *cp = &allocator->custom_pools[i];
+
+    while (cp->pool_size == 0) {
+        cp = &allocator->custom_pools[++i];
+    }
+
+    size_t bs = align_size(block_size, alignment);
+    size_t alloc_size = bs * block_count;
+    
+    cp->pool_start = get_memory(allocator, alloc_size);
+    
+    cp->pool_size = alloc_size;
+    cp->alignment = alignment;
+    cp->block_size = bs;
+    
+    // Dividing memory into blocks
+    void *memory_start = cp->pool_start; 
+    Pool_Block *curr_block = (Pool_Block*)memory_start;
+    cp->free_list = curr_block;
+
+    for (size_t i = 0; i < block_count - 1; i++) {
+        curr_block->next = (Pool_Block*)((u8*)curr_block + cp->block_size);
+        curr_block = curr_block->next;    
+    }
+    curr_block->next = NULL;
+
+    return cp;
+}
+
+Pool *pool_alloc(Pool *p) {
+       Pool_Block *result = p->free_list;
+    p->free_list = result->next;
+    
+    return result;
+}
+
+void pool_free(Pool *p) {
+    p->pool_size = 0;
+}
+
 
 void *palloc() {
-    
+    /* 
+    Automatic allocation for generic pools
+    ...
+    */
 }
 
 void *pool_alloc(Pool *pool) {
