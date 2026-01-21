@@ -18,6 +18,8 @@
 
 **Artigo**: [Untangling Lifetimes: The Arena Allocator](https://www.rfleury.com/p/untangling-lifetimes-the-arena-allocator)
 
+**Artigo**: [Dynamic Storage Allocation: A Survey and Critical Review](../../articles/dynamic%20memory%20allocation%20survey.pdf)
+
 **Vídeo**: [Writing My Own Malloc - Tsoding](https://www.youtube.com/watch?v=sZ8GJ1TiMdk&t=57s)
 
 **Vídeo**: [Coding Malloc in C from Scratch - Daniel Hirsch](https://www.youtube.com/watch?v=_HLAWI84aFA)
@@ -94,3 +96,6 @@ Cada `Chunck` ocupará exatamente uma página (4096 bytes), por motivos de organ
 a partir do Chunck. 
 
 A função `pool_create()` vai criar o Header de uma conforme o usuário necessita. O ponteiro `root_offset` deve ser usado para saber aonde por o Header da Pool a ser alocada.
+
+## 20/01/2026 - Investigando Free-List Allocators
+
