@@ -22,7 +22,7 @@ void test_basic_allocation(Allocator *alloc) {
     LOG_TEST("Alocação Básica e Alinhamento");
     
     // Cria pool para objetos de ~80 bytes (vai arredondar pelo alinhamento)
-    Pool *pool = pool_create(alloc, sizeof(GameObject), 10, DEFAULT_ALIGNMENT);
+    Pool *pool = pool_create(sizeof(GameObject), 10, DEFAULT_ALIGNMENT);
     
     GameObject *obj1 = (GameObject*)pool_alloc(pool);
     assert(obj1 != NULL);

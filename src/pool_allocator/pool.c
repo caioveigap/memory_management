@@ -1,15 +1,3 @@
-/* 
-__Arquitetura do Alocador de Memória__
-
-* Backend Allocator:
-    -> Gerencia as páginas de memória (4KB)
-    -> Guarda uma free-list das páginas livres
-    -> Caso necessário, pede mais memória ao SO
-    -> Guarda os headers das Pools em um array de tamanho fixo
-
-*/
-
-
 #include "pool.h"
 #include <sys/mman.h>
 #include <string.h>
@@ -18,6 +6,11 @@ __Arquitetura do Alocador de Memória__
 #include <stdbool.h>
 #include <assert.h>
 
+/* 
+==============================
+FUNÇÕES UTILITÁRIAS
+==============================
+*/
 
 void print_addr(void *ptr, char *label) {
     printf("%s Address: %ld\n", label, (uintptr_t)ptr);
@@ -29,6 +22,18 @@ bool is_power_of_two(size_t x) {
 
 void *get_ptr_from_offset(void *start, size_t offset) {
     return (void*)((uintptr_t)start + offset);
+}
+
+static inline int get_pool_index_from_size(size_t size) {
+    if (size <= 8)   return 0; // Pool 8 bytes
+    if (size <= 16)  return 1; // Pool 16 bytes
+    if (size <= 32)  return 2; // Pool 32 bytes
+    if (size <= 64)  return 3; // Pool 64 bytes
+    if (size <= 128) return 4; // Pool 128 bytes
+    if (size <= 256) return 5; // Pool 256 bytes
+    if (size <= 512) return 6; // Pool 512 bytes
+    
+    return -1; // Muito grande para pools genéricas
 }
 
 int get_pool_index(Pool *p) {
@@ -80,7 +85,21 @@ void *align_ptr(void *ptr, size_t alignment) {
     return (void*)(addr + (alignment - remainder));
 }
 
+/* 
+==============================
+ALOCADOR
+==============================
+*/
 
+
+
+static Allocator *global_allocator = NULL;
+
+void ensure_allocator_initialized() {
+    if (global_allocator == NULL) {
+        global_allocator = allocator_create();
+    }
+}
 
 Allocator *allocator_create() {
     size_t heap_size = INITIAL_HEAP_SIZE; // 32 MiB
@@ -106,6 +125,7 @@ Allocator *allocator_create() {
         current_pool->free_list = NULL;
         current_pool->root_chunck = NULL;
         current_pool->curr_chunck = NULL;
+        current_pool->parent_allocator = allocator;
         pool_block_size *= 2;
     }
 
@@ -143,7 +163,7 @@ Page_Header *backend_alloc_page(Allocator *allocator) {
     void *new_page_addr = (char*)allocator->heap_start + allocator->heap_offset;
 
     if (mprotect(new_page_addr, PAGE_SIZE, PROT_READ | PROT_WRITE) != 0) {
-        perror("mprotect failed in backend_alloc_page");
+        fprintf(stderr, "Error [%s]: mprotect() failed in backend_alloc_page\n", __func__);
         return NULL;
     }
 
@@ -211,31 +231,38 @@ void pool_get_memory(Pool *pool, size_t size) {
     }
 }
 
-Pool *pool_create(Allocator *allocator, size_t block_size, size_t block_count, size_t alignment) {
+Pool *pool_create(size_t block_size, size_t block_count, size_t alignment) {
+    ensure_allocator_initialized();
+
+    if (block_size > MAX_CUSTOM_POOL_SIZE) {
+        fprintf(stderr, "Error [%s]: Requested size can't be larger than 512 bytes.\n", __func__);
+        return NULL;
+    }
+    
     // Search for free custom pool
     size_t bs = align_size(block_size, alignment);
     size_t alloc_size = bs * block_count;
 
     for (size_t i = 0; i < MAX_CUSTOM_POOLS; i++) {
-        if (allocator->custom_pools[i].pool_size == 0) {
+        if (global_allocator->custom_pools[i].pool_size == 0) {
             // Achou slot livre
-            Pool *pool = &allocator->custom_pools[i];
+            Pool *pool = &global_allocator->custom_pools[i];
             
             // ... (Configura pool_size, block_size, etc) ...
             
             // IMPORTANTE: Configure o pai aqui
-            pool->parent_allocator = allocator; 
+            pool->parent_allocator = global_allocator; 
             pool->pool_size = alloc_size;
             pool->alignment = alignment;
             pool->block_size = bs;
-            pool->parent_allocator = allocator;
+            pool->parent_allocator = global_allocator;
 
             pool_get_memory(pool, alloc_size);
             return pool;
         }
     }
 
-    perror("Error: Out of custom pools!\n");
+    fprintf(stderr, "Error [%s]: Out of custom pools!\n", __func__);
     return NULL;
 }
 
@@ -250,6 +277,21 @@ void *pool_alloc(Pool *p) {
     p->free_list = result->next;
     
     return (void*)result;
+}
+
+void *palloc(size_t size) {
+    ensure_allocator_initialized();
+
+    if (size == 0) return NULL;
+
+    if (size <= MAX_GENERIC_POOL_SIZE) {
+        int index = get_pool_index_from_size(size);
+        Pool *p = (Pool*)(&global_allocator->generic_pools[index]);
+        return pool_alloc(p);
+    } else {
+        assert(0 && "Large Heap allocation not yet implemented\n");
+        return NULL;
+    }
 }
 
 void pool_free_block(Pool *p, void *ptr) {

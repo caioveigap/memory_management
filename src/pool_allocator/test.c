@@ -2,26 +2,37 @@
 #include <stdio.h>
 #include <string.h>
 
+typedef struct Block_Data {
+    char data[80];
+} Block_Data;
+
 
 int main() {
     Allocator *alloc = allocator_create();
-    Pool *p = pool_create(alloc, 80, 32, DEFAULT_ALIGNMENT);
 
-    int *array_list[20];
+    size_t block_size = 80;
+    size_t num_of_blocks = 32;
+    Pool *p = pool_create(block_size, num_of_blocks, DEFAULT_ALIGNMENT);
 
-    for (size_t i = 0; i < 20; i++) {
-        array_list[i] = pool_alloc(p);
-        memset(array_list[i], 0xFF, 80);       
-    }
+    Block_Data *data_01 = pool_alloc(p);
+    Block_Data *data_02 = pool_alloc(p);
+    Block_Data *data_03 = pool_alloc(p);
 
-    
-    int *array = array_list[10];
-    printf("array ptr: %p\n", array);
+    printf("Endereço de memoria do bloco 1: %p\n\n", data_01);
+    printf("Endereço de memoria do bloco 2: %p\n\n", data_02);
+    printf("Endereço de memoria do bloco 3: %p\n\n", data_03);
 
-    pool_free((void*)array);
 
-    int *new_array = pool_alloc(p);
-    printf("new array ptr: %p\n", new_array);
+    memset(data_01, 0xAA, sizeof(Block_Data));
+    memset(data_02, 0xAA, sizeof(Block_Data));
+    memset(data_03, 0xAA, sizeof(Block_Data));
+
+    pool_free(data_02);
+
+    Block_Data *data_04 = pool_alloc(p);
+    printf("Endereço de memoria do bloco 4: %p\n\n", data_04);
+
+
 
     pool_destroy(p);
 }
