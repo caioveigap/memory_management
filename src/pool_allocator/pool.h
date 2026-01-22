@@ -9,7 +9,6 @@
 #define MAX_GENERIC_POOLS 7
 #define MAX_CUSTOM_POOLS 32
 #define INITIAL_HEAP_SIZE 1024 * 1024 * 32
-#define END_BLOCK_FLAG 0x00
 
 
 typedef uint8_t u8;
@@ -70,4 +69,5 @@ struct Allocator {
 Allocator *allocator_create();
 Pool *pool_create(Allocator *allocator, size_t block_size, size_t block_count, size_t alignment);
 void *pool_alloc(Pool *p);
+void pool_free(void *ptr);
 void pool_destroy(Pool *pool);

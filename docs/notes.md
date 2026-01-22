@@ -1,9 +1,5 @@
 # DevLog - Alocador Dinâmico
 
-## Status Atual
-- [X] Implementar `Fixed-Size Pool Allocator (malloc)`
-- [ ] Implementar `Multi-Pool Allocator using mmap`
-
 ## Recursos Úteis
 
 **Artigo:** [Types of memory allocators](https://www.gingerbill.org/series/memory-allocation-strategies/)

@@ -18,17 +18,6 @@ __Arquitetura do Alocador de Memória__
 #include <stdbool.h>
 #include <assert.h>
 
-// #define BITMAP_IDX(page_idx) (page_idx / 8)
-// #define BITMAP_OFFSET(page_idx) (page_idx % 8)
-// #define IS_BIT_SET(map, idx) (map[BITMAP_IDX(idx)] & (1 << BITMAP_OFFSET(idx)))
-// #define SET_BIT(map, idx) (map[BITMAP_IDX(idx)] |= (1 << BITMAP_OFFSET(idx)))
-// #define CLEAR_BIT(map, idx) (map[BITMAP_OFFSET(idx)] &= ~(1 << BITMAP_OFFSET(idx))) 
-
-
-/*
-TODO: Criar função pool_grow()
-TODO: Criar alocação em pools genéricas
- */
 
 void print_addr(void *ptr, char *label) {
     printf("%s Address: %ld\n", label, (uintptr_t)ptr);
@@ -40,6 +29,38 @@ bool is_power_of_two(size_t x) {
 
 void *get_ptr_from_offset(void *start, size_t offset) {
     return (void*)((uintptr_t)start + offset);
+}
+
+int get_pool_index(Pool *p) {
+    // 1. Segurança básica
+    if (p == NULL || p->parent_allocator == NULL) return -1;
+
+    Allocator *alloc = p->parent_allocator;
+
+    // 2. Definir os limites do array 'custom_pools'
+    Pool *start = alloc->custom_pools;             // &custom_pools[0]
+    Pool *end   = start + MAX_CUSTOM_POOLS;        // Ponteiro logo após o último elemento
+
+    // 3. Verificar se o ponteiro 'p' está DENTRO do array
+    if (p >= start && p < end) {
+        // Aritmética de Ponteiros: 
+        // (p - start) retorna a diferença em ELEMENTOS, não em bytes.
+        // O compilador faz o 'sizeof' automaticamente.
+        return (int)(p - start);
+    }
+
+    // --- Opcional: Verificar se é uma Generic Pool ---
+    Pool *gen_start = alloc->generic_pools;
+    Pool *gen_end   = gen_start + MAX_GENERIC_POOLS;
+
+    if (p >= gen_start && p < gen_end) {
+        // Retornamos -2 ou imprimimos erro para diferenciar
+        // printf("Aviso: Tentou pegar indice de Generic Pool em func de Custom Pool\n");
+        return -2; 
+    }
+
+    // 4. Ponteiro não pertence a este alocador ou é inválido
+    return -1; 
 }
 
 size_t align_size(size_t size, size_t alignment) {
@@ -192,27 +213,30 @@ void pool_get_memory(Pool *pool, size_t size) {
 
 Pool *pool_create(Allocator *allocator, size_t block_size, size_t block_count, size_t alignment) {
     // Search for free custom pool
-    size_t i = 0;
-    Pool *pool = &allocator->custom_pools[i];
-
-    while (pool->pool_size != 0) {
-        pool = &allocator->custom_pools[++i];
-    }
-
     size_t bs = align_size(block_size, alignment);
     size_t alloc_size = bs * block_count;
-    // size_t alloc_size = (PAGE_SIZE / (bs * block_count)) * PAGE_SIZE;
 
-    // Define pool atributes 
-    pool->pool_size = alloc_size;
-    pool->alignment = alignment;
-    pool->block_size = bs;
-    pool->parent_allocator = allocator;
-    
-    // Allocate memory for pool
-    pool_get_memory(pool, alloc_size);
+    for (size_t i = 0; i < MAX_CUSTOM_POOLS; i++) {
+        if (allocator->custom_pools[i].pool_size == 0) {
+            // Achou slot livre
+            Pool *pool = &allocator->custom_pools[i];
+            
+            // ... (Configura pool_size, block_size, etc) ...
+            
+            // IMPORTANTE: Configure o pai aqui
+            pool->parent_allocator = allocator; 
+            pool->pool_size = alloc_size;
+            pool->alignment = alignment;
+            pool->block_size = bs;
+            pool->parent_allocator = allocator;
 
-    return pool;
+            pool_get_memory(pool, alloc_size);
+            return pool;
+        }
+    }
+
+    perror("Error: Out of custom pools!\n");
+    return NULL;
 }
 
 void *pool_alloc(Pool *p) {
@@ -228,9 +252,21 @@ void *pool_alloc(Pool *p) {
     return (void*)result;
 }
 
-// void pool_grow(Pool *pool, size_t num_blocks) {
-         
-// }
+void pool_free_block(Pool *p, void *ptr) {
+    Block *block = (Block*)ptr;
+    block->next = p->free_list;
+    p->free_list = block;
+}
+
+void pool_free(void *ptr) {
+    uintptr_t mask = ~(PAGE_SIZE - 1);
+    uintptr_t page_start = (uintptr_t)ptr & mask;
+
+    Chunck *retrived_chunck = (Chunck*)(page_start + sizeof(Page_Header));
+    Pool *p = retrived_chunck->parent_pool;
+
+    pool_free_block(p, ptr);
+}
 
 void pool_destroy(Pool *pool) {
     if (pool == NULL) return;
@@ -246,10 +282,12 @@ void pool_destroy(Pool *pool) {
 
         temp = temp->next;
     }
+    printf("Pool destroyed [%d]\n", get_pool_index(pool));
 
     pool->pool_size = 0;
     pool->free_list = NULL;
     pool->parent_allocator = NULL;
     pool->root_chunck = NULL;
     pool->curr_chunck = NULL;
+
 }
