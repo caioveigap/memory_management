@@ -78,6 +78,7 @@ size_t align_size(size_t size, size_t alignment) {
     }
     return aligned_size; // CORRIGIDO
 }
+
 void *align_ptr(void *ptr, size_t alignment) {
     uintptr_t addr = (uintptr_t)ptr;
     size_t remainder = addr % alignment;
@@ -102,7 +103,7 @@ void ensure_allocator_initialized() {
 }
 
 Allocator *allocator_create() {
-    size_t heap_size = INITIAL_HEAP_SIZE; // 32 MiB
+    size_t heap_size = MAX_HEAP_SIZE; // 32 MiB
     void *heap_base = mmap(NULL, heap_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
     mprotect(heap_base, PAGE_SIZE, PROT_READ | PROT_WRITE);
@@ -156,7 +157,7 @@ Page_Header *backend_alloc_page(Allocator *allocator) {
     }
 
     if (allocator->heap_offset + PAGE_SIZE > allocator->heap_capacity) {
-            fprintf(stderr, "Fatal: Out of Memory (Virtual Reservation Exhausted)\n");
+            fprintf(stderr, "Error [%s]: Out of Memory (Virtual Reservation Exhausted)\n", __func__);
             return NULL;
     }
 

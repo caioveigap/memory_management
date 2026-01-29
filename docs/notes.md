@@ -23,6 +23,8 @@
 **Vídeo**: [Arenas in C](https://www.youtube.com/watch?v=3IAlJSIjvH0&t=92s)<br>
 **-->** [Codebase com implementação de Arena Allocator](https://github.com/PixelRifts/c-codebase/tree/master)
 
+**Repo**: [Doug Lea's Malloc Repo](https://github.com/ennorehling/dlmalloc/tree/master?tab=readme-ov-file)
+
 **Links de artigos do Akita**:
 * [The 640K memory limit of MS-DOS](https://www.xtof.info/blog/?p=985)
 * [The difference between booting MBR and GPT with GRUB](https://www.anchor.com.au/blog/2012/1...)
@@ -93,5 +95,5 @@ a partir do Chunck.
 
 A função `pool_create()` vai criar o Header de uma conforme o usuário necessita. O ponteiro `root_offset` deve ser usado para saber aonde por o Header da Pool a ser alocada.
 
-## 20/01/2026 - Investigando Free-List Allocators
+## 27/01/2026 - Investigando Free-List Allocators
 

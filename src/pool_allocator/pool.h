@@ -8,7 +8,7 @@
 #define POOL_ALLOCATION_LIMIT 32
 #define MAX_GENERIC_POOLS 7
 #define MAX_CUSTOM_POOLS 32
-#define INITIAL_HEAP_SIZE 1024 * 1024 * 32
+#define MAX_HEAP_SIZE 1024 * 1024 * 64
 #define MAX_GENERIC_POOL_SIZE 256
 #define MAX_CUSTOM_POOL_SIZE 512
 
@@ -63,7 +63,7 @@ struct Allocator {
     size_t heap_capacity;
     size_t heap_offset;
 
-    size_t num_pools;
+    // size_t num_pools;
     
     Page_Header *free_pages;
 
