@@ -23,7 +23,7 @@
 **Vídeo**: [Arenas in C](https://www.youtube.com/watch?v=3IAlJSIjvH0&t=92s)<br>
 **-->** [Codebase com implementação de Arena Allocator](https://github.com/PixelRifts/c-codebase/tree/master)
 
-**Repo**: [Doug Lea's Malloc Repo](https://github.com/ennorehling/dlmalloc/tree/master?tab=readme-ov-file)
+**Repo**: [GLIBC Malloc Repo](https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1680)
 
 **Links de artigos do Akita**:
 * [The 640K memory limit of MS-DOS](https://www.xtof.info/blog/?p=985)
@@ -95,5 +95,68 @@ a partir do Chunck.
 
 A função `pool_create()` vai criar o Header de uma conforme o usuário necessita. O ponteiro `root_offset` deve ser usado para saber aonde por o Header da Pool a ser alocada.
 
-## 27/01/2026 - Investigando Free-List Allocators
 
+
+## Elaborando arquitetura do alocador de memória
+
+Um dos principios mais importantes de um alocador de memória é evitar fragmentação externa. Pensando nisto, o alocador que tenho em mente para implementar<br>
+evita isso definindo regiões de memória em que serão alocados blocos menores, e regiões onde serão alocados blocos maiores.<br>
+
+O alocador irá integrar 3 mecanismos de alocação:
+* **Arenas**: A Arena é um setor da memória contínuo e reservado, que pode alocar blocos de qualquer tamanho de maneira sequencial.
+* **Pool**: A Pool é uma estrutura que divide uma região da memória em blocos do mesmo tamanho, em que cada bloco livre guarda um ponteiro para o próximo.
+* **Large Heap**: O Large Heap nada mais é que um alocador padrão, que usa uma Free-List para armazenar os blocos de memória que estão livres.<br>A diferêça desse mecanismo, é que são admitidos blocos de qualquer tamanho.
+
+
+### Camadas do alocador:
+* **[Camada 0] Gerente de Páginas do Backend**: O Alocador deve funcionar como um gerente, e os mecanismos de alocação são seus clientes.<br>Sempre que um sub-sistema de alocação (ex: Pool Allocator) precisar de memória, deve pedir ao backend. O gerente armazena informações de quais páginas estão livres, <br>quais estão ocupadas, e qual sub-sistema está alocando a página.
+
+...
+
+
+### Gerenciador de Páginas
+Requisitos do gerenciador:
+* O gerenciador deve atender a pedidos de requisição de memória, cujo tamanho pode equivaler a qualquer quantidade de páginas.
+* Páginas devem ser unidas em setores maiores de potência de 2 (ex: 4KB, 8KB, 16KB). Isso é necessário para facilitar alocação.
+
+A idéia que pensei para a estrutura desse gerenciador de páginas é a seguinte:<br>
+As páginas serão divididas em `bins` de ordens variadas. A bin de ordem 0 possui uma lista de páginas de 4K livres. <br>Já a bin de ordem 2 possui uma lista de grupos de 2 páginas contínuas.
+Na prática isso aconteceria da seguinte forma: Se por exemplo, o alocador Arena pedisse 10KB de memória contínua, o `Page Manager` deve buscar 4 páginas contínuas de memória.<br>
+Então, verifica a bin de ordem 2 (16KB), se não estiver vazia, puxa o primeiro ponteiro, que aponta para o começo da primeira página de uma sequência de 4 páginas livres.<br>
+Essa implementação não é a mais eficiente em termo de desperdicio de memória, porém é simples e de boa performance de alocação.<br>
+<br>
+
+Para guardar os metadados das páginas, irei utilizar um array de descritores de páginas.<br>
+Em vez de guardar os metadados em um header diretamente no começo da página, criaremos um array separado que descreve os metadados de cada página na memória.<br>
+**Isso evita o seguinte problema**:<br> O usuário pede exatamente 4KB de memória, o que equivale a uma página. Porém, o header da página precisa ficar no começo de sua região de memória.<br>
+Como não é possível alocar o header antes, com o risco de corromper a memória da página anterior, seria necessário alocar 8KB (2 páginas) para o usuário, desperdiçando<br>
+praticamente 50% da memória.
+
+
+
+
+### Mecanismos de alocação
+Acima do gerentes de páginas do backend, haverão seus "clientes", que são os mecanismos de memória: Arena, Pool, e Large-Heap.<br>
+Cada um deles irá requisitar memória para o gerente, e irão administrar essa memória conforme suas políticas.<br>
+**As requisições que cada mecanismo fazer devem ser extritamente em múltiplos das páginas (1, 2, 4, 8... páginas).**
+
+#### <u>Large Heap</u>:
+O Heap Allocator tem o principal objetivo de cuidar de alocações grandes, maiores que 512 bytes, apesar de não ser exatamente proíbido alocar objetos menores.<br>
+Como as alocações dos 3 mecanismos de alocação ficarão conjuntas em memória, é uma boa prática tentar deixar as alocações do Large-Heap juntas em memória, pois<br>
+ele aloca objetos de forma contínua. Por este motivo, o alocador Large-Heap gerencia sua memória em regiões.<br>
+Toda vez que o Large-Heap pedir memória ao backend, irá alocar em chuncks, de no mínimo 32KB (8 páginas). Isso fará com que os objetos alocados pelo Heap-Allocator<br> 
+fiquem em memória contínua, o que aumenta a performance devido a localidade.<br>
+O maior chunck que o Large-Heap pode requisitar ao backend é de 128KB, acima disso, a alocação requisitada será atendida diretamente pelo SO (mmaped).
+
+#### <u>Pool</u>:
+A Pool servirá para alocações pequenas, de no máximo 512 bytes. A Pool divide uma região de memória em blocos de tamanho `block_size`.<br>
+Cada Pool possui regiões de memória que por sua vez possuem os blocos livres, cada região de memória é de tamanho **PAGE_SIZE**. Assim, a Pool guarda<br>
+uma lista das regiões que ela gerencia, podendo aumentar dinâmicamente.
+
+#### <u>Arena</u>:
+A Arena é um mecanismo que aloca um espaço de memória contínua, e realiza alocações sequencialmente, sem possibilidade de liberar "blocos" memória.<br>
+Para uma Arena ser realocada, deve verificar se ainda há espaço sobrando nas páginas que alocou. Isso porque ao criar uma Arena, o tamanho pedido<br>
+pode não ser múltiplo **PAGE_SIZE**, fazendo com que o gerente backend aloque mais página do que o pedido. Ex: Se o usuário criar uma Arena de 10KB, <br>
+o gerente irá alocar 16KB (4 páginas) para aquela Arena, portanto, sobrará espaço.<br>
+Então, o usuário chamade arena_realloc(...), a Arena deve checar se há espaço sobrando primeiro, e se a memória a mais pedida é menor que essa sobra.<br>
+Se for, não há necessidade de mover a Arena inteira para outra região da memória.
