@@ -1,24 +1,20 @@
 #include <sys/mman.h>
-#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <assert.h>
+#include <stdbool.h>
 
-
-#define PAGE_SIZE 4096
-#define RESERVED_MEMORY_REGION_SIZE 268435456 // 256 MB ou 65536 páginas virtuais
-#define MAX_BIN_ORDER 8 // Tamanho máximo da Bin é de 1 MB
+#include "backend_manager.h"
 
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
+typedef uint64_t u64;
 
 
 // ==========================
 //  FLAGS DO PAGE DESCRIPTOR
 // ==========================
-
-// #define PAGE_ALLOCATED 0x0000
-// #define PAGE_UNMAPED 0x000
 
 #define PAGE_FREE 0x01
 #define PAGE_MMAPED 0x02
@@ -30,22 +26,21 @@ typedef uint32_t u32;
 //  ESTRUTURAS PRINCIPAIS
 // ==========================
 
-typedef enum Page_Owner {
-    OWNER_NONE,
-    OWNER_ARENA,
-    OWNER_POOL,
-    OWNER_HEAP,
-    OWNER_DEBUG
-} Page_Owner;
-
 typedef struct Page_Descriptor {
     u8 flags;
     u8 order;
-    Page_Owner owner_type;
+    Page_Owner owner_id;
 
     struct Page_Descriptor *next;
     struct Page_Descriptor *previous;
 } Page_Descriptor;
+
+typedef struct Huge_Allocation_Metadata {
+    size_t total_size;
+    u64 magic_number;
+    Page_Owner owner;
+} Huge_Allocation_Metadata;
+
 
 typedef struct Page_Bin {
     Page_Descriptor *free_list;
@@ -78,15 +73,14 @@ u32 fast_log2(u32 n) {
 }
 
 u32 round_up_pow2(u32 n) {
-    // __builtin_clz retorna o número de zeros à esquerda.
-    // Em um int de 32 bits, subtraímos isso de 32 para achar a posição do bit.
+    if (n <= 1) return 1; // Proteção contra 0 e 1
     return 1 << (32 - __builtin_clz(n - 1));
 }
 
 u32 get_num_pages_from_size(size_t size) {
-    size_t requested_size = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    size_t requested_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     
-    return round_up_pow2(size);
+    return round_up_pow2(requested_pages);
 }
 
 u32 get_order(size_t size) {
@@ -102,25 +96,48 @@ Page_Descriptor *get_descriptor(void *ptr) {
     return &backend_manager->page_map[page_idx];
 }
 
-void *get_address(Page_Descriptor *desc) {
-    u32 page_idx = desc - backend_manager->page_map;
+void *get_address(Page_Descriptor *node) {
+    u32 page_idx = node - backend_manager->page_map;
     return (void*)((char*)backend_manager->memory_start + (page_idx * PAGE_SIZE));
 }
 
-void bin_push(Page_Bin *bin, Page_Descriptor *desc) {
+void bin_push(Page_Bin *bin, Page_Descriptor *node) {
     if (bin->free_list == NULL) {
-        desc->previous = NULL;
-        desc->next = NULL;
-        bin->free_list = desc;
+        node->previous = NULL;
+        node->next = NULL;
+        bin->free_list = node;
         return;
     }
 
-    desc->previous = NULL;
-    desc->next = bin->free_list;
-    bin->free_list->previous = desc;
-    bin->free_list = desc;
+    node->previous = NULL;
+    node->next = bin->free_list;
+    bin->free_list->previous = node;
+    bin->free_list = node;
 
     return;
+}
+
+void bin_remove(Page_Bin *bin, Page_Descriptor *node) {
+    if (node->previous != NULL) {
+        node->previous->next = node->next;
+    } else {
+        bin->free_list = node->next;
+    }
+
+    if (node->next != NULL) {
+        node->next->previous = node->previous;
+    }
+
+    node->previous = NULL;
+    node->next = NULL;
+}
+
+Page_Descriptor *bin_pop(Page_Bin *bin) {
+    if (bin->free_list == NULL) return NULL;
+
+    Page_Descriptor *node = bin->free_list;
+    bin_remove(bin, node);
+    return node;
 }
 
 // ==========================
@@ -153,19 +170,16 @@ void backend_init(size_t total_memory_size) {
     }
 
     // Inicializar (NULL) as bins de áreas livres
-    for (size_t i = 0; i < MAX_BIN_ORDER; i++) {
+    for (size_t i = 0; i <= MAX_BIN_ORDER; i++) {
         backend_manager->bins[i].free_list = NULL;
     }
-
-    // Alocar um bloco de maior ordem
-
 }
 
 /*
 Aloca memória virgem, da reserva, para a Bin de maior ordem 
  */
 int backend_request_memory() {
-    size_t bin_size = 1 << (MAX_BIN_ORDER - 1);
+    size_t bin_size = 1 << MAX_BIN_ORDER;
     size_t alloc_size = bin_size * PAGE_SIZE;
 
     if (backend_manager->page_offset_index + bin_size > backend_manager->total_pages) {
@@ -179,8 +193,8 @@ int backend_request_memory() {
 
     head->flags = PAGE_FREE | PAGE_MMAPED | PAGE_HEAD;
     head->order = MAX_BIN_ORDER;
-    // head->owner_type = OWNER_NONE;
-    head->owner_type = OWNER_DEBUG;
+    // head->owner_id = OWNER_NONE;
+    head->owner_id = OWNER_DEBUG;
 
     bin_push(&backend_manager->bins[MAX_BIN_ORDER], head);
     backend_manager->page_offset_index += bin_size;
@@ -188,21 +202,252 @@ int backend_request_memory() {
     return 1;
 }
 
-// void *backend_alloc_pages() {
+void *backend_alloc_huge(size_t size, Page_Owner owner) {
+    size_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    size_t total_size = (num_pages + 1) * PAGE_SIZE; // +1 Página para o header
 
-// }
+    void *mem_ptr = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-int main() {
-
-    backend_init(RESERVED_MEMORY_REGION_SIZE);
-    int r = backend_request_memory();
-
-    Page_Bin b = backend_manager->bins[MAX_BIN_ORDER];
-
-    if (b.free_list != NULL) {
-        printf("Order: %u\n", b.free_list->order);
-        printf("Owner: %u\n", b.free_list->owner_type);
+    if (mem_ptr == MAP_FAILED) {
+        fprintf(stderr, "Huge Allocation Failed");
+        return NULL;
     }
 
-    return 0;
+    Huge_Allocation_Metadata *meta = (Huge_Allocation_Metadata*)mem_ptr;
+    meta->total_size = total_size;
+    meta->magic_number = HUGE_MAGIC_NUMBER;
+    meta->owner = owner;
+
+    return (u8*)mem_ptr + PAGE_SIZE;
 }
+
+bool is_huge_allocation(void *ptr) {
+    void *start = backend_manager->memory_start;
+    void *end = (u8*)start + (PAGE_SIZE * backend_manager->total_pages);  
+
+    return ((ptr >= start) && (ptr < end)) ? false : true;
+}
+
+void backend_free_huge_allocation(void *ptr) {
+    Huge_Allocation_Metadata *meta = (Huge_Allocation_Metadata*)((u8*)ptr - PAGE_SIZE);
+
+    if (meta->magic_number != HUGE_MAGIC_NUMBER) {
+        fprintf(stderr, "Error: Invalid huge block free request");
+        return;
+    }
+
+    munmap(ptr, meta->total_size);
+}
+
+void *backend_alloc(size_t size, Page_Owner owner) {
+
+    size_t aligned_size = (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+    if (aligned_size > MAX_DEFAULT_ALLOCATION_SIZE) {
+        return backend_alloc_huge(aligned_size, owner);
+    }
+ 
+
+    int order = fast_log2((aligned_size / PAGE_SIZE));
+    assert((order >= 0 && order <= MAX_BIN_ORDER) && "Invalid target order");
+    u8 k = order;
+
+    while (k <= MAX_BIN_ORDER) {
+        if (backend_manager->bins[k].free_list != NULL) break;
+        k++;
+    }
+
+    if (k > MAX_BIN_ORDER) {
+        if (!backend_request_memory()) {
+            return NULL;
+        }
+        k = MAX_BIN_ORDER;
+    }
+
+    Page_Descriptor *block = bin_pop(&backend_manager->bins[k]);
+
+    while (k > order) {
+        k--;
+
+        size_t half_size = 1 << k;
+
+        Page_Descriptor *buddy = block + half_size;
+
+        buddy->flags = PAGE_FREE | PAGE_HEAD;
+        buddy->order = k;
+        buddy->owner_id = OWNER_NONE;
+
+        bin_push(&backend_manager->bins[k], buddy);
+
+        block->order = k;
+    }
+
+    block->flags &= ~PAGE_FREE;
+    block->flags |= PAGE_HEAD;
+    block->owner_id = owner;
+
+    return get_address(block);
+}
+
+void backend_free(void *ptr) {
+    if (is_huge_allocation(ptr)) {
+        backend_free_huge_allocation(ptr);
+        return;
+    }
+
+    Page_Descriptor *block = get_descriptor(ptr);
+
+    // Sanity Check: Double Free
+    if (block->flags & PAGE_FREE) {
+        // fprintf(stderr, "Double Free!\n");
+        return;
+    }
+
+    // Marca o bloco atual como livre para começar a subir a cascata
+    block->flags |= PAGE_FREE;
+    block->flags |= PAGE_HEAD; // Garante que é uma cabeça válida
+    block->owner_id = OWNER_NONE;
+
+    int k = block->order;
+
+    while (k < MAX_BIN_ORDER) {
+        size_t index = block - backend_manager->page_map;
+        size_t buddy_index = index ^ (1 << k);
+
+        // 1. PROTEÇÃO DE BORDA (Faltava no seu snippet)
+        if (buddy_index >= backend_manager->total_pages) break;
+
+        Page_Descriptor *buddy = &backend_manager->page_map[buddy_index];
+
+        // 2. CORREÇÃO CRÍTICA: Operador & (Bitwise)
+        // Verificamos se é Livre, se é Cabeça, e se tem a mesma Ordem.
+        if ((buddy->flags & PAGE_FREE) && 
+            (buddy->flags & PAGE_HEAD) && 
+            (buddy->order == k)) {
+            
+            // Remove o vizinho da lista para fundir
+            bin_remove(&backend_manager->bins[k], buddy);
+
+            if (buddy_index < index) {
+                block = buddy;
+                // O bloco da direita perde o status de HEAD e FREE pois foi engolido
+                // (Opcional, mas ajuda no debug limpar as flags do bloco engolido)
+                Page_Descriptor *engolido = &backend_manager->page_map[index];
+                engolido->flags = 0; 
+                engolido->order = 0; 
+            } else {
+                 // Se o buddy foi engolido (ele estava à direita)
+                 buddy->flags = 0;
+                 buddy->order = 0;
+            }
+
+            k++;
+            block->order = k;
+            block->flags |= PAGE_HEAD; // Reafirma que o novo blocão é HEAD
+        } else {
+            break; // Não dá pra fundir
+        }
+    }
+
+    // Insere o bloco final (agora maior) na lista
+    bin_push(&backend_manager->bins[k], block);
+}
+
+
+// ==========================
+//  FUNÇÕES DEBUG
+// ==========================
+
+
+// Helper para traduzir o enum Owner para String
+const char* debug_get_owner_name(u8 owner) {
+    switch(owner) {
+        case OWNER_NONE:  return "NONE";
+        case OWNER_ARENA: return "ARENA";
+        case OWNER_POOL:  return "POOL";
+        case OWNER_HEAP:  return "HEAP";
+        case OWNER_DEBUG: return "DEBUG";
+        default:          return "UNKNOWN";
+    }
+}
+
+// Helper para formatar tamanho (KB/MB)
+void debug_format_size(size_t bytes, char *buffer) {
+    if (bytes >= 1024 * 1024) {
+        sprintf(buffer, "%zu MB", bytes / (1024 * 1024));
+    } else if (bytes >= 1024) {
+        sprintf(buffer, "%zu KB", bytes / 1024);
+    } else {
+        sprintf(buffer, "%zu B", bytes);
+    }
+}
+
+void debug_print_bins() {
+    if (backend_manager == NULL) {
+        printf("[DEBUG] Backend Manager não inicializado.\n");
+        return;
+    }
+
+    printf("\n");
+    printf("===============================================================\n");
+    printf("                   BUDDY ALLOCATOR STATE                       \n");
+    printf("===============================================================\n");
+    printf(" %-10s | %-10s | %-35s \n", "ORDER", "BLOCK SIZE", "CONTENT (HEAD ADDRESSES)");
+    printf("---------------------------------------------------------------\n");
+
+    size_t total_free_memory = 0;
+
+    // Itera da maior ordem para a menor (visualização mais lógica)
+    for (int i = MAX_BIN_ORDER; i >= 0; i--) {
+        Page_Bin *bin = &backend_manager->bins[i];
+        
+        // Calcula o tamanho do bloco nesta ordem
+        size_t block_size = (1 << i) * PAGE_SIZE;
+        char size_str[16];
+        debug_format_size(block_size, size_str);
+
+        printf(" [%d]        | %-10s | ", i, size_str);
+
+        if (bin->free_list == NULL) {
+            printf("(Empty)\n");
+            continue;
+        }
+
+        // Percorre a lista encadeada
+        Page_Descriptor *curr = bin->free_list;
+        int count = 0;
+        
+        while (curr != NULL) {
+            void *addr = get_address(curr); // Usa sua função auxiliar
+            
+            // Formata flags para visualização compacta [FH..]
+            // F=Free, H=Head, M=Mmap, G=Huge
+            char flags[5] = "....";
+            if (curr->flags & PAGE_FREE) flags[0] = 'F';
+            if (curr->flags & PAGE_HEAD) flags[1] = 'H';
+            if (curr->flags & PAGE_MMAPED) flags[2] = 'M';
+            if (curr->flags & PAGE_HUGE_ALLOCATION) flags[3] = 'G';
+
+            // Imprime o bloco
+            // Ex: [0x7f...000 (DEBUG)] ->
+            if (count > 0) printf(" -> ");
+            printf("[%p (%s)]", addr, debug_get_owner_name(curr->owner_id));
+
+            total_free_memory += block_size;
+            curr = curr->next;
+            count++;
+
+            // Quebra de linha se a lista for muito longa
+            if (count % 3 == 0 && curr != NULL) {
+                printf("\n %-10s | %-10s | ", "", "");
+            }
+        }
+        printf("\n");
+    }
+    
+    char total_str[16];
+    debug_format_size(total_free_memory, total_str);
+    printf("---------------------------------------------------------------\n");
+    printf(" TOTAL FREE MEMORY: %s\n", total_str);
+    printf("===============================================================\n\n");
+}/*  */
