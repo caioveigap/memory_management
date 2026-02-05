@@ -233,6 +233,11 @@ Pool_Block *slice_pool_blocks(Pool_Chunk *chunk) {
 void pool_get_memory(Pool *pool) {
     Pool_Chunk *new_chunk = get_chunk(REQUEST_SIZE_FROM_ORDER(pool->chunk_order));
     
+    if (new_chunk == NULL) {
+        fprintf(stderr, "Error: Could not allocate chunk\n");
+        return;
+    }
+
     Page_Descriptor *chunk_desc = get_descriptor(new_chunk);
 
     size_t padding = align_size(sizeof(Pool_Chunk), DEFAULT_ALIGNMENT);
@@ -254,6 +259,7 @@ void pool_get_memory(Pool *pool) {
         new_chunk->prev = NULL;
         pool->head_chunk = new_chunk;
         pool->active_chunk = new_chunk;
+        pool->capacity += chunk_capacity;
         return;
     }
 
@@ -266,7 +272,6 @@ void pool_get_memory(Pool *pool) {
     active->next = new_chunk;
 
     pool->active_chunk = new_chunk;
-    pool->capacity += chunk_capacity;
 }
 
 u16 calculate_optimal_chunk_order(size_t block_size) {

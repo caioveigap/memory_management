@@ -18,8 +18,7 @@ struct Heap_Allocator {
     Free_Chunck *free_list;
 };
 
-struct Allocation_Header
-{
+struct Allocation_Header {
     size_t size;
     size_t padding;
 };

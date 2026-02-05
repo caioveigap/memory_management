@@ -116,11 +116,11 @@ O alocador irá integrar 3 mecanismos de alocação:
 
 ### Gerenciador de Páginas
 Requisitos do gerenciador:
-* O gerenciador deve atender a pedidos de requisição de memória, cujo tamanho pode equivaler a qualquer quantidade de páginas.
+* O gerenciador (backend) deve atender a pedidos de requisição de memória, cujo tamanho pode equivaler a qualquer quantidade de páginas.
 * Páginas devem ser unidas em setores maiores de potência de 2 (ex: 4KB, 8KB, 16KB). Isso é necessário para facilitar alocação.
 
 A idéia que pensei para a estrutura desse gerenciador de páginas é a seguinte:<br>
-As páginas serão divididas em `bins` de ordens variadas. A bin de ordem 0 possui uma lista de páginas de 4K livres. <br>Já a bin de ordem 2 possui uma lista de grupos de 2 páginas contínuas.
+As páginas serão divididas em `bins` de ordens variadas. A bin de ordem 0 possui uma lista de páginas de 4K livres. <br>Já a bin de ordem 1 possui uma lista de grupos de 2 páginas contínuas.
 Na prática isso aconteceria da seguinte forma: Se por exemplo, o alocador Arena pedisse 10KB de memória contínua, o `Page Manager` deve buscar 4 páginas contínuas de memória.<br>
 Então, verifica a bin de ordem 2 (16KB), se não estiver vazia, puxa o primeiro ponteiro, que aponta para o começo da primeira página de uma sequência de 4 páginas livres.<br>
 Essa implementação não é a mais eficiente em termo de desperdicio de memória, porém é simples e de boa performance de alocação.<br>
@@ -132,7 +132,7 @@ Em vez de guardar os metadados em um header diretamente no começo da página, c
 Como não é possível alocar o header antes, com o risco de corromper a memória da página anterior, seria necessário alocar 8KB (2 páginas) para o usuário, desperdiçando<br>
 praticamente 50% da memória.
 
-
+Para alocações maiores que um limite especificado (geralmente 128KB), alocações são feitas diretamente com a chamada ao sistema: mmap().
 
 
 ### Mecanismos de alocação
@@ -143,15 +143,40 @@ Cada um deles irá requisitar memória para o gerente, e irão administrar essa 
 #### <u>Large Heap</u>:
 O Heap Allocator tem o principal objetivo de cuidar de alocações grandes, maiores que 512 bytes, apesar de não ser exatamente proíbido alocar objetos menores.<br>
 Como as alocações dos 3 mecanismos de alocação ficarão conjuntas em memória, é uma boa prática tentar deixar as alocações do Large-Heap juntas em memória, pois<br>
-ele aloca objetos de forma contínua. Por este motivo, o alocador Large-Heap gerencia sua memória em regiões.<br>
+ele aloca objetos de forma contínua. Por este motivo, o alocador Large-Heap gerencia sua memória em regiões, chamadas `Chuncks`.<br>
 Toda vez que o Large-Heap pedir memória ao backend, irá alocar em chuncks, de no mínimo 32KB (8 páginas). Isso fará com que os objetos alocados pelo Heap-Allocator<br> 
 fiquem em memória contínua, o que aumenta a performance devido a localidade.<br>
 O maior chunck que o Large-Heap pode requisitar ao backend é de 128KB, acima disso, a alocação requisitada será atendida diretamente pelo SO (mmaped).
+
+Os chunks devem guardar informações sobre a quantidade de memória utilizada, o ponteiro para a região de memória, e a capacidade total. <br>
+Se um chunck ficar livre, pode ser devolvido ao backend.
 
 #### <u>Pool</u>:
 A Pool servirá para alocações pequenas, de no máximo 512 bytes. A Pool divide uma região de memória em blocos de tamanho `block_size`.<br>
 Cada Pool possui regiões de memória que por sua vez possuem os blocos livres, cada região de memória é de tamanho **PAGE_SIZE**. Assim, a Pool guarda<br>
 uma lista das regiões que ela gerencia, podendo aumentar dinâmicamente.
+
+A Pool deverá pedir memória ao backend, e admnistrar conforme seu mecanismo. No caso, a Pool deve guardar uma lista de chuncks, como na implementação<br>
+do protótipo. A diferença é que agora, os chuncks podem ser maiores que **PAGE_SIZE**, reduzindo o número de chuncks necessários. O tamanho das Pools<br>
+seguirá o padrão das Bins do backend, em ordens de potência de 2. O tamanho mínimo do Chunck será 4KB, e o máximo 128KB. <br>
+Além disso, a lista de blocos livres `Pool_Block *free_list` não será armazenada mais na Pool, e sim nos chuncks. <br>
+Isso melhora a localidade de memória, e permite que quando um chunck ficar vazio, seja devolvido ao backend.
+
+Outro ponto importante na refatoração é o fluxo de liberação da memória (a função `void pool_free(void *ptr)`). Como agora os chuncks não possuem 4KB unicamente,<br>
+não é possível arredondar o ponteiro para o header do chunck que é "dono" do ponteiro a ser liberado. Para resolver este problema, iremos utilizar os descritores de página.<br>
+
+**Isso funcionará da seguinte forma**:<br>
+Na estrutura do descritor de página (`Page_Descriptor`), haverá um ponteiro genérico para o header da zona que ocupa aquelas páginas:<br>
+```c
+typedef struct Page_Descriptor {
+    ...
+    void *zone_header; // Ponteiro para o chunck "dono" do grupo de páginas
+    ...
+} Page_Descriptor;
+```
+
+Quando um ponteiro (void *ptr) precisa ser liberado, basta encontrar seu descritor chamando `Page_Descriptor *get_descriptor(void *ptr)`, <br>
+e encontrar o chunck que o ponteiro pertence. Depois basta inserir o novo bloco livre na free_list do Chunck.
 
 #### <u>Arena</u>:
 A Arena é um mecanismo que aloca um espaço de memória contínua, e realiza alocações sequencialmente, sem possibilidade de liberar "blocos" memória.<br>

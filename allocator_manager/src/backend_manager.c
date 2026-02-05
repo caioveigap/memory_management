@@ -154,7 +154,7 @@ void *backend_alloc_huge(size_t size, Page_Owner owner) {
         meta->prev = NULL;
         backend_manager->huge_allocation_list = meta;
     } else {
-        meta->next = backend_manager->huge_allocation_list->next;
+        meta->next = backend_manager->huge_allocation_list;
         backend_manager->huge_allocation_list->prev = meta;
         meta->prev = NULL;
         backend_manager->huge_allocation_list = meta;
@@ -176,10 +176,17 @@ void backend_free_huge_allocation(void *ptr) {
     // debug section start
     if (backend_manager->huge_allocation_list == meta) {
         backend_manager->huge_allocation_list = meta->next;
-        meta->next->prev = meta->prev;
+        if (meta->next) {
+            meta->next->prev = meta->prev;
+        } 
+        
     } else {
-        meta->prev->next = meta->next;
-        meta->next->prev = meta->prev;
+        if (meta->prev) {
+            meta->prev->next = meta->next;
+        }
+        if (meta->next) {
+            meta->next->prev = meta->prev;
+        }
     }
     // debug section end
     
