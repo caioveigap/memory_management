@@ -8,6 +8,54 @@
 #include "../include/pool.h"
 #include "../include/utilities.h"
 
+
+
+/* 
+==============================
+    ESTRUTURAS PRINCIPAIS
+==============================
+*/
+
+typedef struct Allocator Allocator;
+
+typedef struct Pool_Block {
+    struct Pool_Block *next;
+} Pool_Block;
+
+typedef struct Pool_Chunk {
+    struct Pool_Chunk *next;
+    struct Pool_Chunk *prev;
+
+    void *data_start;
+    Pool_Block *free_list;
+
+    size_t block_size;
+    size_t capacity; // Quantidade total de blocos
+    size_t used_count;
+
+    struct Pool *parent_pool;
+} Pool_Chunk;
+
+typedef struct Pool {
+    Pool_Chunk *head_chunk;
+    Pool_Chunk *active_chunk;
+
+    size_t capacity; // Número total de blocos
+    size_t block_size;
+
+    u16 alignment;
+    u16 chunk_order;
+
+    Allocator *parent_allocator;
+} Pool;
+
+typedef struct Allocator {
+    size_t total_memory;
+    struct Pool generic_pools[MAX_GENERIC_POOLS]; 
+    struct Pool custom_pools[MAX_CUSTOM_POOLS];
+} Allocator;
+
+
 // DECLARAÇÕES
 Pool_Chunk *get_chunk(size_t size);
 Pool_Block *slice_pool_blocks(Pool_Chunk *chunk);
@@ -94,6 +142,10 @@ Pool *pool_create(size_t block_size) {
 }
 
 void *pool_alloc(Pool *pool) {
+    if (pool == NULL) {
+        fprintf(stderr, "Error: Tried to allocate on invalid pool\n");
+        return NULL;
+    }
     if (pool->active_chunk == NULL || pool->active_chunk->free_list == NULL) {
 
         Pool_Chunk *search = pool->head_chunk;
@@ -128,7 +180,7 @@ void pool_free(void *ptr) {
 
     Pool_Chunk *owner_chunk = (Pool_Chunk*)chunk_descriptor->zone_header;
 
-    size_t chunk_byte_size = chunk_descriptor->order * PAGE_SIZE;
+    size_t chunk_byte_size = (1 << chunk_descriptor->order) * PAGE_SIZE;
     assert(((ptr > (void*)owner_chunk) && (ptr < (void*)((u8*)owner_chunk + chunk_byte_size)))); // Sanity Check
 
     Pool_Block *freed_block = (Pool_Block*)ptr; 
@@ -242,6 +294,7 @@ void pool_get_memory(Pool *pool) {
 
     size_t padding = align_size(sizeof(Pool_Chunk), DEFAULT_ALIGNMENT);
     size_t chunk_capacity = (((1 << chunk_desc->order) * PAGE_SIZE) - padding) / pool->block_size;
+    pool->capacity += chunk_capacity;
     
     new_chunk->block_size = pool->block_size;
     new_chunk->capacity = chunk_capacity;
@@ -259,7 +312,6 @@ void pool_get_memory(Pool *pool) {
         new_chunk->prev = NULL;
         pool->head_chunk = new_chunk;
         pool->active_chunk = new_chunk;
-        pool->capacity += chunk_capacity;
         return;
     }
 

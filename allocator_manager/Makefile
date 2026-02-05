@@ -16,7 +16,7 @@ SRCS = src/test_suite.c src/pool.c src/backend_manager.c
 OBJS = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
 
 # Nome do executável final (agora dentro de bin/)
-TARGET = $(BIN_DIR)/main
+TARGET = $(BIN_DIR)/test_suite
 
 # Regra padrão: garante que as pastas existem antes de compilar
 all: directories $(TARGET)

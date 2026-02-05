@@ -356,7 +356,7 @@ u32 get_order(size_t size) {
 
 Page_Descriptor *get_descriptor(void *ptr) {
     u32 page_idx = ((char*)ptr - (char*)backend_manager->memory_start) / PAGE_SIZE;
-    if (page_idx > backend_manager->total_pages) {
+    if (page_idx >= backend_manager->total_pages) {
         fprintf(stderr, "Error: Pointer out of bounds\n");
         return NULL;
     }

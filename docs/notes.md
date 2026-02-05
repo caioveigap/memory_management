@@ -25,7 +25,7 @@
 
 **Repo**: [GLIBC Malloc Repo](https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1680)
 
-**Links de artigos do Akita**:
+**Links de artigos extras**:
 * [The 640K memory limit of MS-DOS](https://www.xtof.info/blog/?p=985)
 * [The difference between booting MBR and GPT with GRUB](https://www.anchor.com.au/blog/2012/1...)
 * [How Linux system boots up?](https://faun.pub/how-linux-system-boots-up-f15c9e0f7a96)
