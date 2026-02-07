@@ -147,22 +147,7 @@ void *pool_alloc(Pool *pool) {
         return NULL;
     }
     if (pool->active_chunk == NULL || pool->active_chunk->free_list == NULL) {
-
-        Pool_Chunk *search = pool->head_chunk;
-        bool found_chunk = false;
-
-        while (search != NULL) {
-            if (search->free_list != NULL) {
-                pool->active_chunk = search;
-                found_chunk = true;
-                break;
-            }
-            search = search->next;
-        }
-
-        if (!found_chunk) {
-            pool_get_memory(pool);
-        }
+        pool_get_memory(pool);
     }
 
     Pool_Chunk *selected_chunck = pool->active_chunk;
@@ -328,7 +313,7 @@ void pool_get_memory(Pool *pool) {
 
 u16 calculate_optimal_chunk_order(size_t block_size) {
     size_t header_size = sizeof(Pool_Chunk);
-    size_t target_count = 64; 
+    size_t target_count = 128; 
     size_t ideal_size = header_size + (block_size * target_count);
     
     if (ideal_size < 16384) ideal_size = 16384; // Tamanho mínimo da Pool é de 16KB

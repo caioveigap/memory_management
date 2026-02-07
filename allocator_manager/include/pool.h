@@ -11,6 +11,7 @@
 #define MAX_HEAP_SIZE 1024 * 1024 * 64
 #define MAX_POOL_BLOCK_SIZE 512
 #define CHUNK_USAGE_TRESHOLD 0.75
+#define TARGET_BLOCK_COUNT 128
 
 
 typedef struct Pool Pool;

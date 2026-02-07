@@ -10,13 +10,13 @@ BIN_DIR = bin
 # Encontra automaticamente todos os arquivos .c em src/
 # Se preferir listar manualmente: SRCS = src/main.c src/backend_manager.c
 # SRCS = $(wildcard $(SRC_DIR)/*.c)
-SRCS = src/test_suite.c src/pool.c src/backend_manager.c
+SRCS = src/test_suite_pool.c src/pool.c src/backend_manager.c
 
 # Cria a lista de objetos: troca "src/%.c" por "obj/%.o"
 OBJS = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
 
 # Nome do executável final (agora dentro de bin/)
-TARGET = $(BIN_DIR)/test_suite
+TARGET = $(BIN_DIR)/test_suite.out
 
 # Regra padrão: garante que as pastas existem antes de compilar
 all: directories $(TARGET)
