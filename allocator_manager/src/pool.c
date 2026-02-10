@@ -328,7 +328,7 @@ u16 calculate_optimal_chunk_order(size_t block_size) {
 
 static inline int get_pool_index_from_size(size_t size) {
     if (size > 512) return -1;
-
+    if (size < 8) return 0;
     return fast_log2(round_up_pow2(size)) - 3;
 }
 

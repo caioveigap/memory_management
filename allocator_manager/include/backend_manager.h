@@ -1,19 +1,17 @@
 #pragma once
 #include <stddef.h>
-
+#include "utilities.h"
 
 
 #define PAGE_SIZE 4096
 #define RESERVED_MEMORY_REGION_SIZE (size_t)(1024 * 1024 * 2)
-#define MAX_BIN_ORDER 5 // Tamanho máximo da Bin é de 128 KB
+#define MAX_BIN_ORDER 5 // Tamanho máximo da Bin é de 256 KB
 #define MAX_DEFAULT_ALLOCATION_SIZE (PAGE_SIZE * (1 << MAX_BIN_ORDER))
 #define HUGE_MAGIC_NUMBER 0xF22CAA33CE
 #define DEFAULT_ALIGNMENT (2 * sizeof(void*))
 
 #define REQUEST_SIZE_FROM_ORDER(order) ((1 << (order)) * PAGE_SIZE)
 
-typedef uint8_t u8;
-typedef uint32_t u32;
 
 typedef enum Page_Owner {
     OWNER_NONE,

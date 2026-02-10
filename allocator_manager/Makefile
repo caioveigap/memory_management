@@ -1,45 +1,79 @@
 CC = gcc
-# Flags de compilação (adicionei -Isrc para headers)
-CFLAGS = -Wall -Wextra -g -O0 -Isrc
+# -Iinclude: Garante que o compilador ache seus headers em allocator_manager/include/
+CFLAGS_COMMON = -Wall -Wextra -Iinclude
 
-# Definição dos diretórios
+# --- Configurações de Modo (Release vs Debug) ---
+# Release: Otimização máxima (-O3), remove asserts (-DNDEBUG)
+CFLAGS_RELEASE = $(CFLAGS_COMMON) -O3 -DNDEBUG
+# Debug: Símbolos de debug (-g), sem otimização (-O0), ativa macros de debug (-DDEBUG)
+CFLAGS_DEBUG = $(CFLAGS_COMMON) -g -O0 -DDEBUG
+
+# Lógica de decisão: Se rodar 'make DEBUG=1' ou 'make debug', usa flags de debug
+ifdef DEBUG
+    CFLAGS = $(CFLAGS_DEBUG)
+else
+    CFLAGS = $(CFLAGS_RELEASE)
+endif
+
+# --- Diretórios ---
 SRC_DIR = src
 OBJ_DIR = obj
 BIN_DIR = bin
+TEST_DIR = test
 
-# Encontra automaticamente todos os arquivos .c em src/
-# Se preferir listar manualmente: SRCS = src/main.c src/backend_manager.c
-# SRCS = $(wildcard $(SRC_DIR)/*.c)
-SRCS = src/test_suite_pool.c src/pool.c src/backend_manager.c
+# --- 1. Compilação da Biblioteca (Core) ---
+# Encontra automaticamente todos os .c dentro de src/ (backend_manager.c, pool.c, heap.c)
+LIB_SRCS = $(wildcard $(SRC_DIR)/*.c)
+# Cria a lista de objetos esperados: src/arquivo.c -> obj/arquivo.o
+LIB_OBJS = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(LIB_SRCS))
 
-# Cria a lista de objetos: troca "src/%.c" por "obj/%.o"
-OBJS = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
+# --- 2. Compilação dos Testes (Executáveis) ---
+# Encontra automaticamente todos os .c dentro de test/ (test_01.c, test_benchmark.c, etc)
+TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
+# Define o nome dos executáveis finais: test/exemplo.c -> bin/exemplo (sem extensão .out)
+TEST_BINS = $(patsubst $(TEST_DIR)/%.c, $(BIN_DIR)/%, $(TEST_SRCS))
 
-# Nome do executável final (agora dentro de bin/)
-TARGET = $(BIN_DIR)/test_suite.out
+# --- Regras Principais ---
 
-# Regra padrão: garante que as pastas existem antes de compilar
-all: directories $(TARGET)
+# O alvo 'all' agora constrói a lib E todos os testes encontrados
+all: directories $(LIB_OBJS) $(TEST_BINS)
 
-# Cria os diretórios obj e bin se não existirem
 directories:
 	@mkdir -p $(OBJ_DIR)
 	@mkdir -p $(BIN_DIR)
 
-# Regra de Linkagem: Linka os objetos dentro de obj/ para criar o binário em bin/
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+# Regra Mágica para Executáveis de Teste
+# Lê-se: "Para criar um arquivo em bin/, pegue o correspondente em test/%.c 
+# E misture com todos os objetos da biblioteca (LIB_OBJS)"
+$(BIN_DIR)/%: $(TEST_DIR)/%.c $(LIB_OBJS)
+	@echo "Compilando teste: $@"
+	$(CC) $(CFLAGS) $< $(LIB_OBJS) -o $@
 
-# Regra de Compilação: Compila .c de src/ para .o em obj/
+# Regra para compilar os objetos da biblioteca (.c -> .o)
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Limpa as pastas geradas
+# --- Comandos Utilitários ---
+
+# Atalho para compilar em modo debug (limpa tudo antes para garantir recompilação)
+debug: clean
+	@echo "=== BUILD EM MODO DEBUG ==="
+	$(MAKE) all DEBUG=1
+
+# Limpa a sujeira
 clean:
-	rm -f $(OBJ_DIR)/*.o $(BIN_DIR)/*
+	rm -rf $(OBJ_DIR) $(BIN_DIR)
 
-# Atalho para rodar
-run: all
-	./$(TARGET)
+# Ajuda para rodar testes específicos
+# Uso: make run t=test_01
+run:
+ifdef t
+	./$(BIN_DIR)/$(t)
+else
+	@echo "Erro: Especifique o teste com t=..."
+	@echo "Exemplo: make run t=test_01"
+	@echo "Executáveis disponíveis:"
+	@ls $(BIN_DIR) 2>/dev/null || echo "(Nenhum compilado ainda)"
+endif
 
-.PHONY: all directories clean run
+.PHONY: all directories clean debug run
